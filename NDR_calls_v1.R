@@ -80,13 +80,19 @@ fast.chisq <- compiler::cmpfun(function(x, p) {n <- rowSums(x)
 
 setwd("C:/Users/pmeister/AppData/Local/Packages/CanonicalGroupLimited.UbuntuonWindows_79rhkp1fndgsc/LocalState/rootfs/home/pmeister/Bolaji_dSMF/NDR_calls/")
 #x <- readRDS("Amplicon_raw_methylation.rds")
+
 x <- readRDS("dSMFproj_allCs_gw_counts.rds")
 #Methylation is called and raw reads are now in 2 columns: 
-#T (non methylated, converted)
-#M (methylated, non converted)
+#T (total, methylated and non methylated (=.cov))
+#M (methylated, non converted (.C))
+# Input data (x) is a genomic range for all C in a CG or GC context, with 
+# total number of counts (or coverage, T column of the metadata)
+# methylation counts(M column of the metadata)
+# Order matters (should have T then M)
 
+#Extract samples names from the data
 column_names <- names(mcols(x))
-
+column_names
 samples_names <- substr(names(mcols(x)),1,nchar(names(mcols(x)))-2)[seq(1,length(names(mcols(x))),2)]
 samples_names
 
@@ -96,23 +102,16 @@ mcols(x)[,6]<- mcols(x)[,2]+mcols(x)[,4]
 samples_names <- c(samples_names,"N2_dSMFgw_16_20avg") 
 names(mcols(x)) <- c(column_names, "N2_dSMFgw_16_20avg_T", "N2_dSMFgw_16_20avg_M")
 
-# C <- paste(sample,".C", sep="")
-# C
-# cov <- paste(sample,".cov", sep="")
-# cov
-# names(mcols(x)) <- as.vector(rbind(C,cov))
-# names(mcols(x))
-
 samples <- data.frame(samples_names, names(mcols(x))[seq(1,length(names(mcols(x))),2)], names(mcols(x))[seq(2,length(names(mcols(x))),2)])
 names(samples) <- c("Sample","T","M")
 samples
 
 
 #Parameters
-windowWidth= 100
-windowBy=20
-minSize=140
-p.cutoff=15 
+windowWidth= 100 # window for detection (bin)
+windowBy=20      # shift between successive windows
+minSize=140      # minimal size of the detected NDR
+p.cutoff=15      # cutoff for the chi-square p.value (10^-p.cutoff)
 
 #x must have seqlengths defined
 stopifnot(all(!is.na(seqlengths(x))))

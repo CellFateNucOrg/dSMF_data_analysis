@@ -69,18 +69,21 @@ fast.chisq <- compiler::cmpfun(function(x, p) {n <- rowSums(x)
 })
 
 
-setwd("C:/Users/pmeister/AppData/Local/Packages/CanonicalGroupLimited.UbuntuonWindows_79rhkp1fndgsc/LocalState/rootfs/home/pmeister/Bolaji_dSMF/NDR_calls/")
-#x <- readRDS("Amplicon_raw_methylation.rds")
-
-x <- readRDS("dSMFproj_allCs_gw_counts.rds")
-#Methylation is called and raw reads are now in 2 columns: 
-#T (total, methylated and non methylated (=.cov))
-#M (methylated, non converted (.C))
 # Input data (x) is a genomic range for all C in a CG or GC context, with 
 # total number of counts (or coverage, T column of the metadata)
 # methylation counts(M column of the metadata)
+# Samples names are taken from the data
 # Order matters (for each sample, should have _T(total) then _M(methylated))
 
+# Outputs a bigwig file with chi-square p-values versus average whole genome methylation
+# Calls the "Nucleosome Depleted Regions" based on the set p.cutoff 
+# Outputs a bifwig file with the NDRs
+
+path = "C:/Users/pmeister/AppData/Local/Packages/CanonicalGroupLimited.UbuntuonWindows_79rhkp1fndgsc/LocalState/rootfs/home/pmeister/Bolaji_dSMF/NDR_calls/" 
+
+setwd(path)
+#x <- readRDS("Amplicon_raw_methylation.rds")
+x <- readRDS("dSMFproj_allCs_gw_counts.rds")
 
 #Extract samples names from the data
 column_names <- names(mcols(x))
@@ -89,10 +92,10 @@ samples_names <- substr(names(mcols(x)),1,nchar(names(mcols(x)))-2)[seq(1,length
 samples_names
 
 #Make addition for mean 
-mcols(x)[,5]<- mcols(x)[,1]+mcols(x)[,3]
-mcols(x)[,6]<- mcols(x)[,2]+mcols(x)[,4]
-samples_names <- c(samples_names,"N2_dSMFgw_16_20avg") 
-names(mcols(x)) <- c(column_names, "N2_dSMFgw_16_20avg_T", "N2_dSMFgw_16_20avg_M")
+#mcols(x)[,5]<- mcols(x)[,1]+mcols(x)[,3]
+#mcols(x)[,6]<- mcols(x)[,2]+mcols(x)[,4]
+#samples_names <- c(samples_names,"N2_dSMFgw_16_20avg") 
+#names(mcols(x)) <- c(column_names, "N2_dSMFgw_16_20avg_T", "N2_dSMFgw_16_20avg_M")
 
 samples <- data.frame(samples_names, names(mcols(x))[seq(1,length(names(mcols(x))),2)], names(mcols(x))[seq(2,length(names(mcols(x))),2)])
 names(samples) <- c("Sample","T","M")
@@ -109,10 +112,10 @@ p.cutoff=15      # cutoff for the chi-square p.value (10^-p.cutoff)
 stopifnot(all(!is.na(seqlengths(x))))
 # Define windows for pvalue calculation
 windows <- genomeBlocks(seqlengths(x), width=windowWidth, spacing=windowBy)
+seqlengths(windows) <- seqlengths(x)
 
-NDRs <- GRangesList(lapply(1:nrow(samples)
-                           , function(j) {
-  message(paste0("Processing ", samples$Sample[j]))
+for (j in 1:nrow(samples))
+ {message(paste0("Processing ", samples$Sample[j]))
   # Counts of Ms and Cs in each window
   message(" - Counting mCs")
   windows.counts <- cbind("M"=overlapSums(x, windows, values(x)[[samples$M[j]]]))
@@ -129,17 +132,21 @@ NDRs <- GRangesList(lapply(1:nrow(samples)
   message(" - Calculating chisq pvalues")
   windows.pvals <- -log10(fast.chisq(windows.counts, C.T))
   windows.pvals[windows.pvals==Inf] <- max(windows.pvals[!windows.pvals==Inf])
-##TO DO Create a wiggle of the p-value on the windows for display
+  windows.pvals[is.na(windows.pvals)==TRUE] <- 0
+  windows$score <- windows.pvals
+  windows.for.bw <- disjoin(trim(resize(shift(windows,40),20)),with.revmap=TRUE)
+  revmap <- mcols(windows.for.bw)$revmap
+  r_scores <- extractList(mcols(windows)$score, revmap)
+  mcols(windows.for.bw)<-NULL
+  mcols(windows.for.bw)$score <- mean(r_scores)
+  export.bw(windows.for.bw, paste(samples$Sample[j],"_pvalues.bw", sep=""))
+  ##TO DO Create a wiggle of the p-value on the windows for display
   # find regions that meet the cutoff on pvalue and size
   message(" - Finding significant regions")
   windows.cutoff <- reduce(windows[which(windows.pvals>p.cutoff)])
-  windows.cutoff$p.mean <- overlapMeans(windows[!is.na(windows.pvals)], windows.cutoff, windows.pvals[!is.na(windows.pvals)])
+  windows.cutoff$score <- overlapMeans(windows[!is.na(windows.pvals)], windows.cutoff, windows.pvals[!is.na(windows.pvals)])
   #        windows.cutoff$p.mean <- overlapMeans(windows, windows.cutoff, windows.pvals, na.rm=TRUE)
   windows.cutoff <- windows.cutoff[width(windows.cutoff)>=minSize]
+  export.bw(windows.cutoff,paste(samples$Sample[j],"_NDRs_",p.cutoff,".bw",sep=""))
 }
-))
 
-NDRs_avg <- NDRs[[3]]
-names(mcols(NDRs_avg))<- "score"
-seqlengths(NDRs_avg) <- seqlengths(x)
-export.bw(NDRs_avg,"N2_dSMF_NDR_16_20_avg.bw")

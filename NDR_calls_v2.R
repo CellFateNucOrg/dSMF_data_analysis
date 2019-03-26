@@ -3,7 +3,7 @@ library(rtracklayer)
 library(BSgenome.Celegans.UCSC.ce11)
 library(GenomicRanges)
 #' findNDRs, based on Aaron Statham original code, plus Repitools bits (no R >3.5 version available)
-#'#' Find NDRs in NOMe-seq data using a sliding window chi-squared test versus whole genome background
+#' Find NDRs in dSMF-seq data using a sliding window chi-squared test versus whole genome background
 #'
 #' @param x \code{GRanges} of methylation count data at GCH sites
 #' @param samples \code{data.frame} describing the samples to discover NDRs for
@@ -14,14 +14,9 @@ library(GenomicRanges)
 #' @return \code{GRangesList} of NDRs found in each sample with the mean pvalue for each region
 #' 
 #' @importFrom compiler cmpfun
-#' @importFrom Repitools genomeBlocks
 #' @importFrom GenomeInfoDb seqlengths
 #' @importFrom GenomicRanges findOverlaps GRangesList values reduce width
 #'
-#' @export
-#'
-#' @author Aaron Statham <a.statham@@garvan.org.au>
-#' 
 
 setGeneric("genomeBlocks", function(genome, ...) {standardGeneric("genomeBlocks")})
 setMethod("genomeBlocks", "numeric",
@@ -32,8 +27,8 @@ setMethod("genomeBlocks", "numeric",
             
             chr.windows <- lapply(chrs, function(x) {
               centres <- seq.int(min(spacing/2,genome[x]),genome[x],spacing)
-              GRanges(seqnames = names(genome[x]),
-                      ranges = IRanges(start = pmax(centres-width/2+1,1), 
+              GenomicRanges::GRanges(seqnames = names(genome[x]),
+                      ranges = IRanges::IRanges(start = pmax(centres-width/2+1,1), 
                                        end=pmin(centres+width/2, genome[x])))
             })
             
@@ -45,9 +40,9 @@ overlapSums <- function(x, y, z, na.rm=FALSE) {
   stopifnot(class(y)=="GRanges")
   stopifnot(class(z)=="numeric" | class(z)=="integer")
   stopifnot(length(x)==length(z))
-  ov <- as.matrix(findOverlaps(y, x))
+  ov <- as.matrix(GenomicRanges::findOverlaps(y, x))
   ovSums <- rep(as.numeric(NA), length(y))
-  ovSums[unique(ov[,1])] <- viewSums(Views(z[ov[,2]], ranges(Rle(ov[,1]))), na.rm=na.rm)
+  ovSums[unique(ov[,1])] <- IRanges::viewSums(Views(z[ov[,2]], ranges(Rle(ov[,1]))), na.rm=na.rm)
   ovSums
 }
 overlapMeans <- function(x, y, z, na.rm=FALSE) {
@@ -55,9 +50,9 @@ overlapMeans <- function(x, y, z, na.rm=FALSE) {
   stopifnot(class(y)=="GRanges")
   stopifnot(class(z)=="numeric" | class(z)=="integer")
   stopifnot(length(x)==length(z))
-  ov <- as.matrix(findOverlaps(y, x))
+  ov <- as.matrix(GenomicRanges::findOverlaps(y, x))
   ovMeans <- rep(as.numeric(NA), length(y))
-  ovMeans[unique(ov[,1])] <- viewMeans(Views(z[ov[,2]], ranges(Rle(ov[,1]))), na.rm=na.rm)
+  ovMeans[unique(ov[,1])] <- IRanges::viewMeans(Views(z[ov[,2]], ranges(Rle(ov[,1]))), na.rm=na.rm)
   ovMeans
 }
 fast.chisq <- compiler::cmpfun(function(x, p) {n <- rowSums(x)
@@ -69,7 +64,7 @@ fast.chisq <- compiler::cmpfun(function(x, p) {n <- rowSums(x)
 })
 
 
-# Input data (x) is a genomic range for all C in a CG or GC context, with 
+# Input data (x) is a genomic range for all Cs, with 
 # total number of counts (or coverage, T column of the metadata)
 # methylation counts(M column of the metadata)
 # Samples names are taken from the data
@@ -83,21 +78,28 @@ path = "C:/Users/pmeister/AppData/Local/Packages/CanonicalGroupLimited.UbuntuonW
 
 setwd(path)
 #x <- readRDS("Amplicon_raw_methylation.rds")
-x <- readRDS("dSMFproj_allCs_gw_counts.rds")
+all_Cs <- readRDS("dSMFproj_allCs_gw_counts.rds")
+genome=Celegans
+
+#Remove Cs in a non CG or GC context
+CGs<-Biostrings::vmatchPattern("CG", genome)
+CGs<-GenomicRanges::reduce(CGs, ignore.strand=TRUE)
+GCs<-Biostrings::vmatchPattern("GC", genome)
+GCs<-GenomicRanges::reduce(GCs,ignore.strand=TRUE)
+meCs<-GenomicRanges::union(CGs,GCs)
+meCs<-GenomicRanges::reduce(meCs)
+x <- all_Cs[subjectHits(GenomicRanges::findOverlaps(meCs, all_Cs,ignore.strand=TRUE))]
 
 #Extract samples names from the data
 column_names <- names(mcols(x))
-column_names
-samples_names <- substr(names(mcols(x)),1,nchar(names(mcols(x)))-2)[seq(1,length(names(mcols(x))),2)]
-samples_names
-
-#Make addition for mean 
-#mcols(x)[,5]<- mcols(x)[,1]+mcols(x)[,3]
-#mcols(x)[,6]<- mcols(x)[,2]+mcols(x)[,4]
-#samples_names <- c(samples_names,"N2_dSMFgw_16_20avg") 
-#names(mcols(x)) <- c(column_names, "N2_dSMFgw_16_20avg_T", "N2_dSMFgw_16_20avg_M")
-
-samples <- data.frame(samples_names, names(mcols(x))[seq(1,length(names(mcols(x))),2)], names(mcols(x))[seq(2,length(names(mcols(x))),2)])
+M_columns <- grep("*_M", column_names, value=TRUE)
+M_columns <- M_columns[order(M_columns)]
+T_columns <- grep("*_T", column_names, value=TRUE)
+T_columns <- T_columns[order(T_columns)]
+stopifnot(length(M_columns)==length(T_columns))
+samples_names <- substr(M_columns,1,nchar(M_columns)-2)
+stopifnot(substr(T_columns,1,nchar(T_columns)-2)==samples_names)
+samples <- data.frame(samples_names, T_columns, M_columns)
 names(samples) <- c("Sample","T","M")
 samples
 
@@ -111,8 +113,8 @@ p.cutoff=15      # cutoff for the chi-square p.value (10^-p.cutoff)
 #x must have seqlengths defined
 stopifnot(all(!is.na(seqlengths(x))))
 # Define windows for pvalue calculation
-windows <- genomeBlocks(seqlengths(x), width=windowWidth, spacing=windowBy)
-seqlengths(windows) <- seqlengths(x)
+windows <- genomeBlocks(GenomeInfoDb::seqlengths(x), width=windowWidth, spacing=windowBy)
+GenomeInfoDb::seqlengths(windows) <- GenomeInfoDb::seqlengths(x)
 
 for (j in 1:nrow(samples))
  {message(paste0("Processing ", samples$Sample[j]))
@@ -134,19 +136,19 @@ for (j in 1:nrow(samples))
   windows.pvals[windows.pvals==Inf] <- max(windows.pvals[!windows.pvals==Inf])
   windows.pvals[is.na(windows.pvals)==TRUE] <- 0
   windows$score <- windows.pvals
-  windows.for.bw <- disjoin(trim(resize(shift(windows,40),20)),with.revmap=TRUE)
+  suppressWarnings(do.call(c, chr.windows))
+  windows.for.bw <- GenomicRanges::disjoin(GenomicRanges::trim(GenomicRanges::resize(GenomicRanges::shift(windows,40),20)),with.revmap=TRUE)
   revmap <- mcols(windows.for.bw)$revmap
   r_scores <- extractList(mcols(windows)$score, revmap)
   mcols(windows.for.bw)<-NULL
   mcols(windows.for.bw)$score <- mean(r_scores)
-  export.bw(windows.for.bw, paste(samples$Sample[j],"_pvalues.bw", sep=""))
-  ##TO DO Create a wiggle of the p-value on the windows for display
+  rtracklayer::export.bw(windows.for.bw, paste(samples$Sample[j],"_pvalues.bw", sep=""))
   # find regions that meet the cutoff on pvalue and size
   message(" - Finding significant regions")
   windows.cutoff <- reduce(windows[which(windows.pvals>p.cutoff)])
   windows.cutoff$score <- overlapMeans(windows[!is.na(windows.pvals)], windows.cutoff, windows.pvals[!is.na(windows.pvals)])
   #        windows.cutoff$p.mean <- overlapMeans(windows, windows.cutoff, windows.pvals, na.rm=TRUE)
   windows.cutoff <- windows.cutoff[width(windows.cutoff)>=minSize]
-  export.bw(windows.cutoff,paste(samples$Sample[j],"_NDRs_",p.cutoff,".bw",sep=""))
+  rtracklayer::export.bw(windows.cutoff,paste(samples$Sample[j],"_NDRs_",p.cutoff,".bw",sep=""))
 }
 
